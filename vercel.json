@@ -4,7 +4,7 @@
         { "source": "/(.*)", "destination": "/api/server" }
     ],
     "functions": {
-        "api/app.py": {
+        "api/server.py": {
             "maxDuration": 60
         }
     }
