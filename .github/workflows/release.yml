@@ -25,11 +25,11 @@ jobs:
 
     - name: Build Docker image
       run: |
-        docker build -t ghcr.io/team-spiral-racing/docs:${{ github.ref_name }} .
+        docker build -t ghcr.io/team-spiral-racing/data-service:${{ github.ref_name }} .
 
     - name: Push Docker image to GitHub Container Registry
       run: |
-        docker push ghcr.io/team-spiral-racing/docs:${{ github.ref_name }}
+        docker push ghcr.io/team-spiral-racing/data-service:${{ github.ref_name }}
 
     - name: Generate release notes
       id: generate_release_notes
