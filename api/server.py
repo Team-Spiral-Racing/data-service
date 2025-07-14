@@ -83,7 +83,7 @@ def youtube() -> Response:
     # Get videos from past 6 hours
     pst = timezone(timedelta(hours=-7))
     now_pst = datetime.now(pst)
-    published_after_utc = (now_pst - timedelta(hours=500)).astimezone(timezone.utc)
+    published_after_utc = (now_pst - timedelta(hours=6)).astimezone(timezone.utc)
     published_after = published_after_utc.isoformat(timespec='seconds').replace('+00:00', 'Z')
 
     yt_request = YOUTUBE_CLIENT.search().list(
