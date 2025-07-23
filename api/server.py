@@ -13,7 +13,7 @@ from pymongo import MongoClient, ASCENDING
 # Util
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from lib.git_utils import GitUtils
+from lib.git_utils import GitHubAPIUtils
 from lib.util import *
 import os
 
@@ -24,7 +24,7 @@ load_dotenv()
 MONGO_CLIENT = MongoClient(os.getenv('MONGO_CONNECTION'))
 DATABASE = MONGO_CLIENT[os.getenv('MONGO_DB_NAME')]
 YOUTUBE_CLIENT = build('youtube', 'v3', developerKey=os.getenv('YOUTUBE_API_KEY'))
-COMMITTER = GitUtils(
+COMMITTER = GitHubAPIUtils(
     token=os.getenv("GITHUB_TOKEN"),
     owner="Team-Spiral-Racing",
     repo="blog",
@@ -246,7 +246,7 @@ def process_single_blog(blog_post):
 
     This function formats the blog post into markdown, downloads its associated 
     background image, and commits both the markdown and image to the GitHub repo 
-    under the path: `content/posts/<slug>`.
+    using the GitHub API.
 
     Args:
         blog_post (dict): A dictionary representing the blog post. It must contain:
@@ -255,15 +255,14 @@ def process_single_blog(blog_post):
             - other fields required by `format_markdown_to_blowfish`.
 
     Side Effects:
-        - Writes/updates files on disk.
-        - Commits and pushes changes to the configured GitHub repository.
+        - Creates/updates files in the GitHub repository via API calls.
     """
     # Gather post context
     blog_markdown = format_markdown_to_blowfish(DATABASE, blog_post)
     image_background = blog_post["imageRef"]
     article_path = blog_post["_id"]
 
-    # Commit to repo
+    # Commit to repo via GitHub API
     COMMITTER.commit_blog_post(
         slug=article_path,
         markdown=blog_markdown,
@@ -274,10 +273,10 @@ def process_single_blog(blog_post):
 def blog_cron_sync():
     """
     Fetches all blog posts from the database and compares them with the GitHub
-    repository. Commits only the ones that have changed or are new.
+    repository. Commits only the ones that have changed or are new using the GitHub API.
     """
-    changed_files = []
     blog_posts = DATABASE["BlogPost"].find()
+    files_to_commit = []
 
     for blog_post in blog_posts:
         slug = blog_post["_id"]
@@ -286,23 +285,41 @@ def blog_cron_sync():
 
         post_dir = f"content/posts/{slug}"
         markdown_path = f"{post_dir}/index.md"
-        markdown_bytes = markdown.encode("utf-8")
-        if COMMITTER.file_changed(markdown_path, markdown_bytes):
-            COMMITTER.write_file(markdown_path, markdown_bytes)
-            changed_files.append(markdown_path)
+        markdown_content = markdown.encode("utf-8")
 
-        image_bytes, ext = COMMITTER.download_image(image_url)
-        image_path = f"{post_dir}/featured{ext}"
-        if COMMITTER.file_changed(image_path, image_bytes):
-            COMMITTER.write_file(image_path, image_bytes)
-            changed_files.append(image_path)
+        # Check if markdown file needs update
+        if COMMITTER.file_changed(markdown_path, markdown_content):
+            files_to_commit.append({
+                "path": markdown_path,
+                "content": markdown_content,
+                "encoding": "utf-8"
+            })
 
-    if COMMITTER.commit_files(
-        changed_files,
-        "ci(ops): sync all blog posts",
-        author_email="bot@teamspiralracing.com",
-        author_name="TSR Service Account [Bot]"
-    ):
-        return {"msg": f"Committed {len(changed_files)} changed files."}
+        # Download and check image
+        try:
+            image_content, ext = COMMITTER.download_image(image_url)
+            image_path = f"{post_dir}/featured{ext}"
+            
+            if COMMITTER.file_changed(image_path, image_content):
+                files_to_commit.append({
+                    "path": image_path,
+                    "content": image_content,
+                    "encoding": "base64"
+                })
+        except Exception as e:
+            print(f"Error downloading image for {slug}: {e}", flush=True)
+
+    # Commit all changed files in a single commit
+    if files_to_commit:
+        success = COMMITTER.commit_files(
+            files_to_commit,
+            "ci(ops): sync all blog posts",
+            author_email="bot@teamspiralracing.com",
+            author_name="TSR Service Account [Bot]"
+        )
+        if success:
+            return {"msg": f"Committed {len(files_to_commit)} changed files."}
+        else:
+            return {"msg": "Failed to commit changes."}
     else:
         return {"msg": "No changes detected. Nothing to commit."}
