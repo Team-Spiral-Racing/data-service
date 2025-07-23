@@ -1,6 +1,11 @@
 from flask import Flask, Response, redirect, url_for, abort, request
 from dotenv import load_dotenv
 
+# Dev
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 # Third Party
 from googleapiclient.discovery import build
 from pymongo import MongoClient, ASCENDING
@@ -11,6 +16,8 @@ from collections import defaultdict
 from lib.git_utils import GitUtils
 from lib.util import *
 import os
+
+
 
 # Setup
 load_dotenv()
