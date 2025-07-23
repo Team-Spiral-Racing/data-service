@@ -8,8 +8,8 @@ from pymongo import MongoClient, ASCENDING
 # Util
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
-from git_utils import GitUtils
-from util import *
+from lib.git_utils import GitUtils
+from lib.util import *
 import os
 
 # Setup
