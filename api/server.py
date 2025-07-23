@@ -8,18 +8,26 @@ from pymongo import MongoClient, ASCENDING
 # Util
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
+from git_utils import GitUtils
+from util import *
 import os
-import re
 
 # Setup
 load_dotenv()
 MONGO_CLIENT = MongoClient(os.getenv('MONGO_CONNECTION'))
 DATABASE = MONGO_CLIENT[os.getenv('MONGO_DB_NAME')]
 YOUTUBE_CLIENT = build('youtube', 'v3', developerKey=os.getenv('YOUTUBE_API_KEY'))
+COMMITTER = GitUtils(
+    token=os.getenv("GITHUB_TOKEN"),
+    owner="Team-Spiral-Racing",
+    repo="blog",
+    branch="main"
+)
 app = Flask(__name__)
 
 # Config
 CRON_SECRET = os.getenv('CRON_SECRET')
+API_KEY = os.getenv('API_KEY')
 TSR_YOUTUBE = os.getenv('TSR_YOUTUBE_CHANNEL')
 
 
@@ -111,7 +119,43 @@ def youtube() -> Response:
     }
 
 
-# --- Util ---
+@app.route('/blog', methods=['POST'])
+def blog() -> Response:
+    blog_post = None
+
+    # Parse request
+    data = request.get_json() or {}
+    blog_id = data.get("blog")
+    auth_header = request.headers.get("Authorization")
+
+    # Parse auth
+    if not auth_header or not auth_header.startswith("Bearer "):
+        abort(401, description="Missing or invalid Authorization header")
+    token = auth_header.split(" ", 1)[1]
+
+    if blog_id:
+        # Case 1: Specific blog post - verify with API_KEY
+        if token != API_KEY:
+            abort(403, description="Invalid bearer token for blog update")
+
+        blog_post = DATABASE["BlogPost"].find_one({"_id": blog_id})
+        if not blog_post:
+            abort(404, description=f"BlogPost with ID {blog_id} not found")
+
+        process_single_blog(blog_post)
+    else:
+        # Case 2: Full sync or cron-based update - verify with CRON_SECRET
+        if token != CRON_SECRET:
+            abort(403, description="Invalid bearer token for cron job")
+
+        blog_cron_sync()
+   
+    return {
+        "msg": f"Job processed succesfully."
+    }
+
+
+# --- Detailed ---
 def process_ta(videos: list) -> None:
     """
     Processes Time Attack YouTube videos by fetching full descriptions, extracting metadata,
@@ -189,55 +233,69 @@ def process_raw(videos: list) -> None:
     pass
 
 
-def extract_metadata(description: str) -> dict:
+def process_single_blog(blog_post):
     """
-    Extracts metadata enclosed between === delimiters in the video description.
+    Processes and commits a single blog post to the GitHub repository.
 
-    Example block:
-    ===
-    track: Buttonwillow
-    configuration: CW13
-    date: 06/03/2025
-    car: hyperion
-    tag: v3
-    time: 1:12.123
-    driver: jonathan.lo@teamspiralracing.com
-    ===
-
-    Returns:
-        dict: Parsed metadata as key-value pairs.
-    """
-    matches = re.findall(r'===\s*(.*?)\s*===', description, re.DOTALL)
-    if not matches:
-        return {}
-
-    block = matches[0]
-    metadata = {}
-
-    for line in block.strip().splitlines():
-        if ':' in line:
-            key, value = line.split(':', 1)
-            metadata[key.strip()] = value.strip()
-
-    return metadata
-
-
-def parse_lap_time_to_seconds(lap_time: str) -> float:
-    """
-    Converts a lap time string into a float value in seconds.
-
-    Supports both MM:SS.xxx and SS.xxx formats.
-
-    Methods:
-        None (helper function)
+    This function formats the blog post into markdown, downloads its associated 
+    background image, and commits both the markdown and image to the GitHub repo 
+    under the path: `content/posts/<slug>`.
 
     Args:
-        lap_time (str): Lap time string from the YouTube description (e.g., "1:12.123").
+        blog_post (dict): A dictionary representing the blog post. It must contain:
+            - '_id': The slug used for the post directory.
+            - 'imageRef': A URL to the background image.
+            - other fields required by `format_markdown_to_blowfish`.
 
-    Returns:
-        float: Total lap time in seconds (e.g., 72.123).
+    Side Effects:
+        - Writes/updates files on disk.
+        - Commits and pushes changes to the configured GitHub repository.
     """
-    if ':' in lap_time:
-        minutes, seconds = lap_time.split(':')
-        return int(minutes) * 60 + float(seconds)
-    return float(lap_time)
+    # Gather post context
+    blog_markdown = format_markdown_to_blowfish(DATABASE, blog_post)
+    image_background = blog_post["imageRef"]
+    article_path = blog_post["_id"]
+
+    # Commit to repo
+    COMMITTER.commit_blog_post(
+        slug=article_path,
+        markdown=blog_markdown,
+        image_url=image_background
+    )
+
+
+def blog_cron_sync():
+    """
+    Fetches all blog posts from the database and compares them with the GitHub
+    repository. Commits only the ones that have changed or are new.
+    """
+    changed_files = []
+    blog_posts = DATABASE["BlogPost"].find()
+
+    for blog_post in blog_posts:
+        slug = blog_post["_id"]
+        image_url = blog_post["imageRef"]
+        markdown = format_markdown_to_blowfish(DATABASE, blog_post)
+
+        post_dir = f"content/posts/{slug}"
+        markdown_path = f"{post_dir}/index.md"
+        markdown_bytes = markdown.encode("utf-8")
+        if COMMITTER.file_changed(markdown_path, markdown_bytes):
+            COMMITTER.write_file(markdown_path, markdown_bytes)
+            changed_files.append(markdown_path)
+
+        image_bytes, ext = COMMITTER.download_image(image_url)
+        image_path = f"{post_dir}/featured{ext}"
+        if COMMITTER.file_changed(image_path, image_bytes):
+            COMMITTER.write_file(image_path, image_bytes)
+            changed_files.append(image_path)
+
+    if COMMITTER.commit_files(
+        changed_files,
+        "ci(ops): sync all blog posts",
+        author_email="bot@teamspiralracing.com",
+        author_name="TSR Service Account [Bot]"
+    ):
+        return {"msg": f"Committed {len(changed_files)} changed files."}
+    else:
+        return {"msg": "No changes detected. Nothing to commit."}
