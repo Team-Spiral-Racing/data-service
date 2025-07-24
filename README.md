@@ -12,7 +12,7 @@ The Team Spiral Racing Data Service is run serverlessly on CRON. It gathers data
 - Status: ![TSR YouTube status](https://api.cron-job.org/jobs/6348392/f47775860db9872a/status-1.svg)
 
 #### TSR Blog
-- Interval: 1 hours (+ 15 minute offset)
+- Interval: 24 hours (+ 15 minute offset)
 - Status:  ![TSR Blog status](https://api.cron-job.org/jobs/6380415/8e63cd423f631df3/status-1.svg)
 
 ## Running Locally
